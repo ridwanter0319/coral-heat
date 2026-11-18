@@ -1,147 +1,199 @@
-// Coral Heat — the story: three jobs for fixer Lena Voss, then the bay is yours.
-// Dario Solano owes Lena money; each job pays a chunk of it off and makes the CBPD angrier.
-// Missions are a small state machine over world markers (a gold beacon you can see across
-// town and a blip on the minimap). After the chain, endless paid errands keep free roam fed.
-window.CH = window.CH || {};
+// missions.js — the Coral Heat story chain. Fixer "Marisol Vega" runs the
+// player through three jobs: collect a package, move hot goods across
+// town, then scoop cash drops along Ocean Drive before the trail goes
+// cold. Each job is a glowing beacon in the world and a blip on the
+// minimap; finishing the chain unlocks free roam.
+(function () {
+  'use strict';
 
-CH.createMissions = function (scene, hooks) {
-  // marker beacon: a column of gold light + a ring on the ground
-  const beacon = new THREE.Group();
-  const column = new THREE.Mesh(
-    new THREE.CylinderGeometry(1.7, 1.7, 30, 14, 1, true),
-    new THREE.MeshBasicMaterial({ color: 0xffc94d, transparent: true, opacity: 0.32, side: THREE.DoubleSide, depthWrite: false })
-  );
-  column.position.y = 15;
-  beacon.add(column);
-  const ring = new THREE.Mesh(
-    new THREE.TorusGeometry(2.3, 0.16, 8, 28),
-    new THREE.MeshBasicMaterial({ color: 0xffc94d })
-  );
-  ring.rotation.x = Math.PI / 2; ring.position.y = 0.35;
-  beacon.add(ring);
-  beacon.visible = false;
-  scene.add(beacon);
+  const R = window.CH.rng;
 
-  // cash drop props for mission 3
-  const dropMat = new THREE.MeshBasicMaterial({ color: 0x51ff7a });
-  const drops = [];
-  for (let i = 0; i < 3; i++) {
-    const d = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.5, 0.6), dropMat);
-    d.visible = false; scene.add(d); drops.push(d);
+  const CHAIN = [
+    {
+      id: 'package-deal',
+      title: 'Package Deal',
+      intro: 'Marisol: A courier dropped a package behind the Coral Court hotel. Pick it up.',
+      objective: 'Reach the package behind Coral Court',
+      reward: 250,
+      pickup: { x: -80, z: -64 },
+      dropoff: null,
+      wantedOnPickup: 1,
+    },
+    {
+      id: 'hot-goods',
+      title: 'Hot Goods',
+      intro: 'Marisol: Good. Now get that package to the marina garage — and expect company.',
+      objective: 'Deliver the package to the marina garage',
+      reward: 600,
+      pickup: null, // starts already carrying from mission 1's pickup point flow
+      dropoff: { x: 120, z: 108 },
+      wantedOnPickup: 2,
+    },
+    {
+      id: 'cash-rain',
+      title: 'Cash Rain',
+      intro: 'Marisol: Last job. My driver panicked and scattered cash drops along Ocean Drive. Grab all three.',
+      objective: 'Collect the cash drops on Ocean Drive',
+      reward: 1200,
+      drops: [
+        { x: -140, z: 108 },
+        { x: 0, z: 108 },
+        { x: 140, z: 108 },
+      ],
+      wantedOnPickup: 2,
+    },
+  ];
+
+  // Runtime state for whichever mission is live.
+  function createMissionState() {
+    return {
+      stage: 0, // index into CHAIN; CHAIN.length = free roam
+      phase: 'pickup', // 'pickup' | 'dropoff' | 'drops' | 'done'
+      dropsLeft: [],
+      beacon: null,
+      beaconPos: null,
+      complete: false,
+    };
   }
 
-  const SPOTS = {
-    pickup: { x: 133, z: 133 },        // the pier boardwalk, east end
-    garage: { x: -128.6, z: -80 },     // Marina Garage, north-west
-    hideout: { x: 63.4, z: -63.4 },    // Uncle Ray's garage
-    drops: [
-      { x: -15.4, z: -32.6 },
-      { x: 80.6, z: 32.6 },
-      { x: -80.6, z: 63.4 },
-    ],
-    errands: [
-      { x: 128.6, z: 15.4 }, { x: -32.6, z: -128.6 }, { x: 15.4, z: 80.6 },
-      { x: -128.6, z: 111.4 }, { x: 111.4, z: -32.6 }, { x: -63.4, z: 32.6 },
-    ],
-  };
-
-  let stage = 0;         // 0,1,2 = story jobs; 3 = cash drops; 4 = free roam errands
-  let dropCount = 0;
-  let errandIdx = 0;
-  let started = false;
-
-  function target() {
-    if (stage === 0) return SPOTS.pickup;
-    if (stage === 1) return SPOTS.garage;
-    if (stage === 2) return null; // drops instead
-    if (stage === 3) return SPOTS.hideout;
-    return SPOTS.errands[errandIdx % SPOTS.errands.length];
+  function currentMission(state) {
+    return state.stage < CHAIN.length ? CHAIN[state.stage] : null;
   }
-  function objective() {
-    switch (stage) {
-      case 0: return '<b>Job 1 · Package Deal:</b> pick up Lena\'s package at the <b>pier boardwalk</b>, east end of the bay.';
-      case 1: return '<b>Job 2 · Hot Goods:</b> the drop was watched — deliver the package to the <b>Marina Garage</b>, north-west corner.';
-      case 2: return '<b>Job 3 · Cash Rain:</b> grab Lena\'s cash drops around town — <b>' + dropCount + ' / 3</b> collected.';
-      case 3: return '<b>Job 3 · Cash Rain:</b> now get the money to <b>Uncle Ray\'s garage</b> and you\'re square.';
-      default: return '<b>Free roam.</b> Coral Bay is yours — run the parcel to the <b>gold marker</b> for $150, or just enjoy the sunset.';
+
+  // Where the player currently needs to go, or null in free roam.
+  function currentTarget(state) {
+    const m = currentMission(state);
+    if (!m) return null;
+    if (state.phase === 'pickup') return m.pickup;
+    if (state.phase === 'dropoff') return m.dropoff;
+    if (state.phase === 'drops') return state.dropsLeft[0] || null;
+    return null;
+  }
+
+  function objectiveText(state) {
+    const m = currentMission(state);
+    if (!m) return 'Free roam — Coral Bay is yours.';
+    if (state.phase === 'drops') {
+      return m.objective + ' (' + state.dropsLeft.length + ' left)';
     }
+    return m.objective;
   }
 
-  function placeBeacon() {
-    const t = target();
-    if (t) { beacon.visible = true; beacon.position.set(t.x, 0, t.z); }
-    else beacon.visible = false;
-    drops.forEach((d, i) => {
-      d.visible = stage === 2 && !d.userData.taken;
-      if (d.visible) d.position.set(SPOTS.drops[i].x, 0.8, SPOTS.drops[i].z);
-    });
-  }
-
-  function start(atStage) {
-    stage = atStage || 0;
-    dropCount = 0;
-    drops.forEach((d) => { d.userData.taken = false; });
-    started = true;
-    placeBeacon();
-    hooks.setObjective(objective());
-  }
-
-  function completeStage() {
-    if (stage === 0) {
-      hooks.addCash(250);
-      hooks.banner('PACKAGE COLLECTED', '+$250 — one debt shrinks');
-      stage = 1;
-      hooks.addHeat(2); // the drop was watched: police are alerted for the delivery
-    } else if (stage === 1) {
-      hooks.addCash(600);
-      hooks.banner('DELIVERED', '+$600 — Lena is almost smiling');
-      stage = 2;
-    } else if (stage === 3) {
-      hooks.addCash(900);
-      hooks.banner('SQUARE WITH LENA', '+$900 — the bay is yours now');
-      stage = 4;
-      hooks.onStoryComplete();
-    } else if (stage === 4) {
-      hooks.addCash(150);
-      hooks.toast('+$150 — errand run');
-      errandIdx++;
+  // Start (or restart) a stage: reset phase, seed the drops list.
+  function beginStage(state, stage) {
+    state.stage = stage;
+    state.complete = false;
+    const m = currentMission(state);
+    if (!m) {
+      state.phase = 'done';
+      state.dropsLeft = [];
+      return null;
     }
-    placeBeacon();
-    hooks.setObjective(objective());
-    hooks.save();
+    if (m.drops) {
+      state.phase = 'drops';
+      state.dropsLeft = m.drops.slice();
+    } else if (m.pickup) {
+      state.phase = 'pickup';
+    } else {
+      state.phase = 'dropoff';
+    }
+    return m;
   }
 
-  let pulse = 0;
-  function update(dt, ctx) {
-    if (!started) return;
-    pulse += dt;
-    ring.scale.setScalar(1 + Math.sin(pulse * 4) * 0.12);
-    column.material.opacity = 0.26 + Math.sin(pulse * 4) * 0.08;
-    drops.forEach((d) => { if (d.visible) d.rotation.y += dt * 2.4; });
-    const p = ctx.playerPos;
-    if (stage === 2) {
-      drops.forEach((d, i) => {
-        if (d.visible && CH.dist2d(p.x, p.z, SPOTS.drops[i].x, SPOTS.drops[i].z) < 3.4) {
-          d.userData.taken = true; d.visible = false;
-          dropCount++;
-          hooks.cashPickup();
-          hooks.toast('Cash drop ' + dropCount + ' / 3');
-          if (dropCount >= 3) { stage = 3; placeBeacon(); }
-          hooks.setObjective(objective());
-          hooks.save();
-        }
-      });
+  // Called by the main loop when the player stands in the beacon.
+  // Returns an event describing what happened, or null.
+  function reachTarget(state) {
+    const m = currentMission(state);
+    if (!m) return null;
+    if (state.phase === 'pickup') {
+      state.phase = 'dropoff';
+      if (!m.dropoff) {
+        // Single-stop mission: pickup completes it.
+        return finishStage(state, m);
+      }
+      return { type: 'pickup', mission: m, wanted: m.wantedOnPickup || 0 };
+    }
+    if (state.phase === 'dropoff') {
+      return finishStage(state, m);
+    }
+    if (state.phase === 'drops') {
+      state.dropsLeft.shift();
+      if (state.dropsLeft.length === 0) return finishStage(state, m);
+      return { type: 'drop', mission: m, left: state.dropsLeft.length, wanted: 0 };
+    }
+    return null;
+  }
+
+  function finishStage(state, m) {
+    const reward = m.reward;
+    state.stage += 1;
+    const next = beginStage(state, state.stage);
+    return {
+      type: 'complete',
+      mission: m,
+      reward,
+      next,
+      chainDone: !next,
+      wanted: 0,
+    };
+  }
+
+  // --- beacon visuals ------------------------------------------------------
+  function buildBeacon(scene) {
+    const group = new THREE.Group();
+    const cylinder = new THREE.Mesh(
+      new THREE.CylinderGeometry(2.6, 2.6, 30, 18, 1, true),
+      new THREE.MeshBasicMaterial({
+        color: 0xffd23e,
+        transparent: true,
+        opacity: 0.32,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      })
+    );
+    cylinder.position.y = 15;
+    group.add(cylinder);
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(2.0, 2.6, 24),
+      new THREE.MeshBasicMaterial({ color: 0xffd23e, transparent: true, opacity: 0.85, side: THREE.DoubleSide })
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.25;
+    group.add(ring);
+    const marker = new THREE.Mesh(
+      new THREE.OctahedronGeometry(0.9),
+      new THREE.MeshBasicMaterial({ color: 0xffe97a })
+    );
+    marker.position.y = 3.4;
+    group.add(marker);
+    group.visible = false;
+    scene.add(group);
+    return { group, marker, cylinder };
+  }
+
+  function updateBeacon(beacon, target, t) {
+    if (!beacon) return;
+    if (!target) {
+      beacon.group.visible = false;
       return;
     }
-    const t = target();
-    if (t && CH.dist2d(p.x, p.z, t.x, t.z) < 4.6) completeStage();
+    beacon.group.visible = true;
+    beacon.group.position.set(target.x, 0, target.z);
+    beacon.marker.position.y = 3.4 + Math.sin(t * 2.4) * 0.45;
+    beacon.marker.rotation.y = t * 1.8;
+    beacon.cylinder.material.opacity = 0.26 + Math.sin(t * 3) * 0.07;
   }
 
-  return {
-    start, update,
-    get stage() { return stage; },
-    markerPos: target,
-    dropsActive: () => (stage === 2 ? SPOTS.drops.filter((d, i) => !drops[i].userData.taken) : []),
-    objective,
+  window.CH = window.CH || {};
+  window.CH.missions = {
+    CHAIN,
+    createMissionState,
+    currentMission,
+    currentTarget,
+    objectiveText,
+    beginStage,
+    reachTarget,
+    buildBeacon,
+    updateBeacon,
   };
-};
+})();

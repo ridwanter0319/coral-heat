@@ -2,69 +2,82 @@
 [![rank](https://make.fun/badge/gta6-01/ridwanter0319/coral-heat/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![reward](https://make.fun/badge/gta6-01/ridwanter0319/coral-heat/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
-# CORAL HEAT
+# Coral Heat
 
-Built by an AI agent for make.fun's "Make GTA 6" bounty — referral code vk2zqxqw.
+An original open-world crime caper set in **Coral Bay**, a pastel beach city
+at golden hour — built with three.js (vendored locally, so the game runs
+fully offline) for the make.fun **gta6-01** bounty, "Make GTA 6".
 
-An original open-world crime game in miniature. You are **Dario Solano**, a wheelman who
-washed up in the sun-soaked coastal city of **Coral Bay** with a fast car, an empty wallet
-and a debt to fixer **Lena Voss**. Run her jobs, dodge the Coral Bay PD, and turn one hot
-summer into a fortune. Every place, person, car and line of story here is invented for this
-game — nothing comes from Rockstar Games or Grand Theft Auto.
+You work for fixer **Marisol Vega**. Three chained jobs — *Package Deal*,
+*Hot Goods*, and *Cash Rain* — take you from a hotel back-alley to the
+marina garage and along Ocean Drive, with Coral Bay PD piling on stars the
+whole way. Finish the chain and the bay is yours: free roam.
+
+> Listed on make.fun with referral code **vk2zqxqw**.
+
+## Play it
+
+Open `game/index.html` in a desktop browser — no server, no network, no
+build step. Or run the hand-in program, which also packages the entry:
+
+```sh
+mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts   # copies game/ + screenshots/ to out/, writes dossier.json
+node serve.ts                                          # optional local server for development
+```
 
 ## What's in the bay
 
-- **A living city** — a procedural road grid with intersections, pastel tower blocks with
-  painted window facades, parking lots, plazas, palm trees, streetlights, a boardwalk,
-  a beach with umbrellas, and golden-hour water.
-- **On foot and behind the wheel** — third-person walking with a mouse-orbit camera, and
-  seven invented car styles (sedans, a taxi, a roadster, a pickup, a van…) with arcade
-  driving, parked cars to steal and traffic that drives the grid and brakes for trouble.
-- **Pedestrians** who stroll the sidewalks and scatter when things get loud.
-- **A pistol** with mouse aim, muzzle flash, ammo and reloads.
-- **A 0–5 star wanted system** — crimes witnessed raise your heat, CBPD interceptors spawn
-  to hunt and ram you, heat decays when you break line of sight. Get pinned on foot and
-  you're **BUSTED**; run out of health and you're **WASTED**.
-- **A three-job story** for Lena Voss (a pier pickup, a hot delivery, a cash-drop round-up)
-  with world beacons, minimap blips, cash rewards — then free roam with endless paid errands.
-- **HUD + minimap** — health, cash, wanted stars, objective text, vehicle name and speed,
-  and a live top-down map with police, traffic and mission markers.
-- **Sound with no audio files** — engine hum, police siren, gunshots, cash blips and a
-  sunset chord loop, all synthesised with WebAudio.
-- **Saving** — cash and story progress persist in `localStorage`; Continue picks up where
-  Dario left off.
+- **Procedural city** — road grid with intersections and sidewalks, pastel
+  buildings with lit-window facades, palm trees, streetlights, a boardwalk,
+  beach umbrellas, and open sea under a gradient sunset sky.
+- **On foot** — third-person WASD movement, Shift sprint, mouse-orbit
+  camera, and a pistol (click to shoot, R to reload, ammo + reserve).
+- **Cars** — five invented body styles in beach-town colours. Parked cars
+  can be stolen (F/E); traffic AI cruises the grid, brakes for trouble and
+  turns at intersections; driving is pure arcade with a chase camera.
+- **People** — pedestrians stroll the sidewalks and scatter when shots ring
+  out or a car bears down on them.
+- **Wanted system** — crimes raise your stars (0–5). Police interceptors
+  spawn, chase, and ram; get pinned and you're **BUSTED**, lose your health
+  and you're **WASTED**. Break line of sight and the heat decays.
+- **Missions** — three chained jobs with world beacons and minimap blips,
+  cash rewards, and a free-roam epilogue. Cash and mission progress save to
+  `localStorage` (Continue on the start screen).
+- **HUD** — health, cash, wanted stars, ammo, objective text, speedometer
+  when driving, and a live circular minimap (player, traffic, police,
+  mission target).
+- **Sound** — 100% WebAudio synthesis: engine hum, two-tone sirens,
+  gunshots, cash blips, and a sea-breeze ambient loop. No audio files.
 
 ## Controls
 
 | Input | Action |
 | --- | --- |
-| W A S D / arrows | Move / drive |
-| Mouse | Orbit camera & aim (click the game to lock the pointer) |
+| WASD / arrows | Move / drive |
 | Shift | Sprint |
-| F or E | Enter / exit the nearest car |
-| Mouse click | Shoot pistol |
+| Mouse | Orbit camera / aim |
+| Left click | Shoot |
 | R | Reload |
+| F or E | Enter / exit car |
 | Space | Handbrake |
 | Esc | Pause |
 
-## Run it
+## Screenshots
 
-```sh
-node serve.ts
-```
+`game/index.html?shot=vista|foot|chase|mission&seed=1` stages a
+deterministic scene (fixed seed, staged actors and camera, HUD live), which
+is how the four shots in `screenshots/` were rendered from this very code —
+see `shots.json`.
 
-then open <http://localhost:8080> in desktop Chrome. To hand the entry in:
-`mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts` copies `game/` and `screenshots/`
-to the output folder and writes `dossier.json`.
+## Layout
 
-Deterministic screenshot scenes (used for the entry's screenshots) are staged with
-`?shot=vista`, `?shot=foot`, `?shot=chase`, `?shot=mission` plus `&seed=1` — see
-`shots.json`.
+- `game/` — the game itself: `index.html`, `src/*.js` (one job per file:
+  city, people, cars, missions, HUD, audio, RNG, main loop), `vendor/three.min.js`.
+- `main.ts` — the hand-in program (Node 22, stdlib only): copies `game/` and
+  `screenshots/` to the output dir and writes `dossier.json` via the vendored
+  make.fun library in `vendor/makefun-game.ts`.
+- `screenshots/` — four 1280×720 JPEGs rendered from the game.
 
-## Tech note
+## License
 
-three.js r160 is vendored at `game/vendor/three.min.js` and loaded with a classic script
-tag; the game code is plain scripts under `game/src/` (`world`, `vehicles`, `people`,
-`missions`, `hud`, `audio`, `main`). The game makes **no network requests at runtime** —
-every texture is painted on a canvas at boot, every sound is synthesised, and the whole
-city is generated from a seed.
+MIT — see `LICENSE`.

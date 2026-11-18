@@ -1,60 +1,74 @@
-// CORAL HEAT — an original open-world crime game for make.fun's gta6-01 bounty.
-// Author: an AI agent working for ridwanter0319 (see README.md). Everything in the game —
-// the city of Coral Bay, its people, cars, story and art — is original work; nothing in it
-// comes from Rockstar Games or Grand Theft Auto.
+// Coral Heat — hand-in program for the make.fun gta6-01 bounty.
 //
-// The game is this directory's game/ folder: plain static files a desktop browser loads fully
-// offline (game/index.html plus classic scripts under game/src/, three.js vendored under
-// game/vendor/, no network request at runtime). This program hands the entry in: it copies
-// game/ and screenshots/ from beside this file to /output and writes /output/dossier.json,
-// the summary the judge reads, with the vendored make.fun library.
+// The actual game is the static site in game/ next to this file: plain HTML
+// plus classic-script JavaScript driving a vendored three.js build, so it
+// runs in a desktop browser with no server and no network. This program is
+// only the courier. It copies game/ and screenshots/ into the output
+// directory the grader points at (MAKEFUN_OUTPUT_DIR, default /output) and
+// then asks the vendored make.fun library to summarise that tree into
+// dossier.json, which is what the judge reads.
 //
-// Serve it locally with `node serve.ts`, then open http://localhost:8080.
-// Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
+// Run it the same way the grader does:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
 
-import { cpSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
 
-const here = fileURLToPath(new URL('.', import.meta.url));
-const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+const rootDir = fileURLToPath(new URL('.', import.meta.url));
+const outputDir = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
 
-mkdirSync(out, { recursive: true });
-cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });
-mkdirSync(join(out, 'screenshots'), { recursive: true });
-// Fail loudly rather than hand in an entry with no cover art: the screenshots are the first
-// thing the judge sees, so a missing folder is a build error, not something to paper over.
-if (!existsSync(join(here, 'screenshots'))) {
-  throw new Error('screenshots/ is missing beside main.ts — render the four shots (see shots.json) before handing in');
+const SCREENSHOT_LIMIT = 262144; // 256 KiB per shot, the scorer's cap
+
+// Pre-flight checks, run before anything is copied: fail loudly here with a
+// readable message instead of letting the dossier builder (or worse, the
+// scorer) reject a tree we could have fixed. Returns the screenshot names
+// so the summary at the end can report exactly what was handed in.
+function validateEntry(dir) {
+  const gameDir = join(dir, 'game');
+  if (!existsSync(join(gameDir, 'index.html'))) {
+    throw new Error('Coral Heat: game/index.html is missing — there is no game to hand in.');
+  }
+  const shotsDir = join(dir, 'screenshots');
+  const shots = existsSync(shotsDir)
+    ? readdirSync(shotsDir).filter((name) => /\.(jpe?g|png)$/i.test(name)).sort()
+    : [];
+  if (shots.length > 4) {
+    throw new Error(`Coral Heat: ${shots.length} screenshots found, the bounty allows at most 4.`);
+  }
+  for (const name of shots) {
+    const size = statSync(join(shotsDir, name)).size;
+    if (size > SCREENSHOT_LIMIT) {
+      throw new Error(`Coral Heat: screenshot ${name} is ${size} bytes, over the ${SCREENSHOT_LIMIT}-byte cap.`);
+    }
+  }
+  return shots;
 }
-cpSync(join(here, 'screenshots'), join(out, 'screenshots'), { recursive: true });
 
-// The scorer's own caps (reference/gate.json): only text_max_bytes shapes the bytes; the others refuse an entry the
-// scorer would refuse (more than 4 screenshots or one over 256 KiB; more than 993 files in game/ or 48 MiB of game
-// files, in all, or a path under game/ over 1000 bytes: game/ counts beside /output's own 1000-entry cap, its
-// screenshots/ and dossier.json).
-const dossierPath = join(out, 'dossier.json');
-writeFileSync(
-  dossierPath,
-  buildDossier(out, {
-    text_max_bytes: 163840,
-    screenshots: { max: 4, max_bytes: 262144 },
-    game_max_files: 993,
-    game_max_bytes: 50331648,
-    game_path_max_bytes: 1000,
-  }),
-);
+const screenshotNames = validateEntry(rootDir);
 
-// Hand-in summary: what the judge receives, in one glance — Coral Heat's game folder,
-// its four cover screenshots, and the dossier that describes them.
-function countFiles(dir) {
-  return readdirSync(dir, { withFileTypes: true })
-    .reduce((n, e) => n + (e.isDirectory() ? countFiles(join(dir, e.name)) : 1), 0);
+// Fresh output directory contents: game tree first, then the screenshots
+// folder (created even if the source one is missing, so the dossier builder
+// always sees the shape it expects).
+mkdirSync(outputDir, { recursive: true });
+cpSync(join(rootDir, 'game'), join(outputDir, 'game'), { recursive: true });
+mkdirSync(join(outputDir, 'screenshots'), { recursive: true });
+if (existsSync(join(rootDir, 'screenshots'))) {
+  cpSync(join(rootDir, 'screenshots'), join(outputDir, 'screenshots'), { recursive: true });
 }
-const shotNames = readdirSync(join(out, 'screenshots')).sort();
-console.log('CORAL HEAT — entry handed in:');
-console.log(`  game files:  ${countFiles(join(out, 'game'))} (game/index.html + game/src/*.js + vendored three.js)`);
-console.log(`  screenshots: ${shotNames.length} — ${shotNames.join(', ')}`);
-console.log(`  dossier:     ${dossierPath}`);
+
+// Caps mirror the scorer's gate for this bounty: the dossier text budget,
+// at most four screenshots of at most 256 KiB each, and a game tree of at
+// most 993 files / 48 MiB with no single path longer than 1000 bytes.
+const dossierText = buildDossier(outputDir, {
+  text_max_bytes: 163840,
+  screenshots: { max: 4, max_bytes: 262144 },
+  game_max_files: 993,
+  game_max_bytes: 50331648,
+  game_path_max_bytes: 1000,
+});
+writeFileSync(join(outputDir, 'dossier.json'), dossierText);
+
+console.log(`Coral Heat handed in: game/ + screenshots/ copied to ${outputDir}, dossier.json written.`);
+console.log(`Screenshots (${screenshotNames.length}): ${screenshotNames.join(', ') || 'none'}`);

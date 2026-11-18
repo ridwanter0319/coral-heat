@@ -1,108 +1,172 @@
-// Coral Heat — the HUD: health, cash, wanted stars, objective line, vehicle readout, toasts,
-// mission banners, and the corner minimap (roads, player arrow, police, traffic, markers).
-window.CH = window.CH || {};
+// hud.js — the on-screen layer: health / cash / wanted stars / ammo,
+// objective banner, vehicle speed readout, toast messages, and the
+// circular minimap drawn on a 2D canvas (roads, player arrow, police,
+// traffic, pedestrians skipped for clarity, mission blip pulsing gold).
+(function () {
+  'use strict';
 
-CH.createHUD = function () {
-  const $ = (id) => document.getElementById(id);
-  const hud = $('hud'), healthbar = $('healthbar'), cashEl = $('cash'), ammoEl = $('ammo'),
-    starsEl = $('stars'), objEl = $('objective'), vehEl = $('vehicle'),
-    bannerEl = $('banner'), toastEl = $('toast'), vigEl = $('vignette'),
-    crossEl = $('crosshair');
-  const mapCtx = $('minimap').getContext('2d');
-  let bannerTimer = null, toastTimer = null;
+  const R = window.CH.rng;
 
-  starsEl.innerHTML = '';
-  const starSpans = [];
-  for (let i = 0; i < 5; i++) {
-    const s = document.createElement('span');
-    s.textContent = '★';
-    starsEl.appendChild(s); starSpans.push(s);
+  function el(id) {
+    return document.getElementById(id);
   }
 
-  function show() { hud.classList.add('on'); }
-  function hide() { hud.classList.remove('on'); }
-  function setHealth(pct) {
-    healthbar.style.width = CH.clamp(pct, 0, 100) + '%';
-    healthbar.style.background = pct < 30
-      ? 'linear-gradient(90deg,#e33,#f66)' : 'linear-gradient(90deg,#37d67a,#a6e34d)';
+  function createHud() {
+    const hud = {
+      root: el('hud'),
+      healthFill: el('health-fill'),
+      cash: el('cash-value'),
+      stars: el('wanted-stars'),
+      ammo: el('ammo-value'),
+      weapon: el('weapon-name'),
+      objective: el('objective-text'),
+      missionTitle: el('mission-title'),
+      speedBox: el('speed-box'),
+      speed: el('speed-value'),
+      toast: el('toast'),
+      banner: el('banner'),
+      bannerTitle: el('banner-title'),
+      bannerSub: el('banner-sub'),
+      minimap: el('minimap'),
+      toastTimer: 0,
+      bannerTimer: 0,
+    };
+    hud.mapCtx = hud.minimap ? hud.minimap.getContext('2d') : null;
+    return hud;
   }
-  function setCash(n) { cashEl.innerHTML = '$' + n.toLocaleString('en-US') + ' <small>CASH</small>'; }
-  function setAmmo(cur, mag, reloading) {
-    ammoEl.textContent = reloading ? 'RELOADING…' : ('PISTOL ' + cur + ' / ' + mag);
-  }
-  function setStars(n) {
-    starSpans.forEach((s, i) => s.className = i < n ? 'lit' : '');
-  }
-  function setObjective(html) { objEl.innerHTML = html; }
-  function setVehicle(name, kmh) {
-    if (name == null) { vehEl.style.display = 'none'; return; }
-    vehEl.style.display = 'block';
-    vehEl.querySelector('.vname').textContent = name;
-    vehEl.querySelector('.vspeed').innerHTML = Math.round(kmh) + ' <small>KM/H</small>';
-  }
-  function setCrosshair(on) { crossEl.style.display = on ? 'block' : 'none'; }
-  function banner(title, sub) {
-    bannerEl.querySelector('.btitle').textContent = title;
-    bannerEl.querySelector('.bsub').textContent = sub || '';
-    bannerEl.classList.add('show');
-    clearTimeout(bannerTimer);
-    bannerTimer = setTimeout(() => bannerEl.classList.remove('show'), 3400);
-  }
-  function toast(msg) {
-    toastEl.textContent = msg;
-    toastEl.classList.add('show');
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2200);
-  }
-  function setVignette(op) { vigEl.style.opacity = op; }
 
-  // ---- minimap ----
-  const MW = 188, WORLD_MIN = -172, WORLD_MAX = 196; // z runs further south (the sea)
-  function mx(x) { return ((x - WORLD_MIN) / (WORLD_MAX - WORLD_MIN)) * MW; }
-  function mz(z) { return ((z - WORLD_MIN) / (WORLD_MAX - WORLD_MIN)) * MW; }
-  function drawMinimap(world, view) {
-    const g = mapCtx;
-    g.clearRect(0, 0, MW, MW);
-    // sea + sand + land
-    g.fillStyle = '#27586b'; g.fillRect(0, 0, MW, MW);
-    g.fillStyle = '#7d8471'; g.fillRect(mx(-172), mz(-172), mx(172) - mx(-172), mz(150) - mz(-172));
-    g.fillStyle = '#ecd29a'; g.fillRect(mx(-172), mz(128), mx(172) - mx(-172), mz(152) - mz(128));
-    g.fillStyle = '#1f7f96'; g.fillRect(mx(-172), mz(150), mx(172) - mx(-172), MW - mz(150));
-    // roads
-    g.strokeStyle = '#454b52'; g.lineWidth = 3;
-    world.AX.forEach((x) => { g.beginPath(); g.moveTo(mx(x), mz(-150)); g.lineTo(mx(x), mz(120)); g.stroke(); });
-    world.SZ.concat([120]).forEach((z) => { g.beginPath(); g.moveTo(mx(-150), mz(z)); g.lineTo(mx(150), mz(z)); g.stroke(); });
-    // traffic
-    g.fillStyle = '#c8ccd2';
-    view.traffic.forEach((c) => { g.fillRect(mx(c.x) - 1.5, mz(c.z) - 1.5, 3, 3); });
-    // cash drops
-    g.fillStyle = '#51ff7a';
-    view.drops.forEach((d) => { g.beginPath(); g.arc(mx(d.x), mz(d.z), 3, 0, 7); g.fill(); });
-    // mission marker (pulsing gold)
-    if (view.marker) {
-      const r = 4.5 + Math.sin(Date.now() / 240) * 1.4;
-      g.fillStyle = '#ffc94d';
-      g.beginPath(); g.arc(mx(view.marker.x), mz(view.marker.z), r, 0, 7); g.fill();
-      g.strokeStyle = '#fff3c4'; g.lineWidth = 1.6;
-      g.beginPath(); g.arc(mx(view.marker.x), mz(view.marker.z), r, 0, 7); g.stroke();
+  function showToast(hud, text, seconds) {
+    if (!hud.toast) return;
+    hud.toast.textContent = text;
+    hud.toast.classList.add('show');
+    hud.toastTimer = seconds || 2.6;
+  }
+
+  function showBanner(hud, title, sub, seconds) {
+    if (!hud.banner) return;
+    hud.bannerTitle.textContent = title;
+    hud.bannerSub.textContent = sub || '';
+    hud.banner.classList.add('show');
+    hud.bannerTimer = seconds || 3.4;
+  }
+
+  function updateHud(hud, state, dt) {
+    if (hud.toastTimer > 0) {
+      hud.toastTimer -= dt;
+      if (hud.toastTimer <= 0) hud.toast.classList.remove('show');
     }
-    // police
-    view.police.forEach((c) => {
-      g.fillStyle = (Math.sin(Date.now() / 130) > 0) ? '#ff4444' : '#4488ff';
-      g.beginPath(); g.arc(mx(c.x), mz(c.z), 3.4, 0, 7); g.fill();
-    });
-    // player arrow
-    const px = mx(view.player.x), pz = mz(view.player.z), h = view.player.heading;
-    g.save();
-    g.translate(px, pz); g.rotate(Math.PI - h); // map y grows with world z; heading 0 faces +Z (down-map)
-    g.fillStyle = '#ffffff';
-    g.beginPath(); g.moveTo(0, -6.5); g.lineTo(4.4, 5); g.lineTo(0, 2.6); g.lineTo(-4.4, 5); g.closePath(); g.fill();
-    g.strokeStyle = '#14202b'; g.lineWidth = 1.2; g.stroke();
-    g.restore();
+    if (hud.bannerTimer > 0) {
+      hud.bannerTimer -= dt;
+      if (hud.bannerTimer <= 0) hud.banner.classList.remove('show');
+    }
+    hud.healthFill.style.width = Math.max(0, Math.min(100, state.health)) + '%';
+    hud.healthFill.style.background = state.health > 35 ? '#3ddc74' : '#e74c3c';
+    hud.cash.textContent = '$' + state.cash.toLocaleString('en-US');
+    let stars = '';
+    for (let i = 0; i < 5; i++) stars += i < state.wanted ? '★' : '☆';
+    hud.stars.textContent = stars;
+    hud.stars.style.opacity = state.wanted > 0 ? '1' : '0.35';
+    hud.weapon.textContent = state.inCar ? '—' : 'PISTOL';
+    hud.ammo.textContent = state.inCar ? '' : state.ammo + ' / ' + state.reserve;
+    if (state.reloading) hud.ammo.textContent += ' …';
+    hud.objective.textContent = state.objective;
+    hud.missionTitle.textContent = state.missionTitle || '';
+    if (state.inCar) {
+      hud.speedBox.classList.add('show');
+      hud.speed.textContent = Math.round(state.speedKmh);
+    } else {
+      hud.speedBox.classList.remove('show');
+    }
   }
 
-  return {
-    show, hide, setHealth, setCash, setAmmo, setStars, setObjective, setVehicle,
-    setCrosshair, banner, toast, setVignette, drawMinimap,
-  };
-};
+  // --- minimap ---------------------------------------------------------------
+  // World spans roughly -200..200 on both axes; the map is a square canvas
+  // with north up. Roads are drawn from the same grid constants the city
+  // builder used, so the map always matches the streets.
+  const WORLD = 210;
+
+  function worldToMap(canvas, x, z) {
+    const s = canvas.width / (WORLD * 2);
+    return [canvas.width / 2 + x * s, canvas.height / 2 + z * s];
+  }
+
+  function drawMinimap(hud, view) {
+    const ctx = hud.mapCtx;
+    if (!ctx) return;
+    const canvas = hud.minimap;
+    const W = canvas.width;
+    ctx.clearRect(0, 0, W, W);
+    ctx.fillStyle = '#20242e';
+    ctx.fillRect(0, 0, W, W);
+
+    // Sea + beach strip at the south edge.
+    const seaY = worldToMap(canvas, 0, view.city.seaStart)[1];
+    ctx.fillStyle = '#2e7ea6';
+    ctx.fillRect(0, seaY, W, W - seaY);
+    const sandY = worldToMap(canvas, 0, view.city.sandStart)[1];
+    ctx.fillStyle = '#eed9a4';
+    ctx.fillRect(0, sandY, W, seaY - sandY);
+
+    // Roads.
+    ctx.strokeStyle = '#565d6e';
+    ctx.lineWidth = Math.max(2, W * 0.02);
+    ctx.beginPath();
+    view.city.avenuesX.forEach(function (x) {
+      const a = worldToMap(canvas, x, -WORLD);
+      const b = worldToMap(canvas, x, view.city.coastZ);
+      ctx.moveTo(a[0], a[1]);
+      ctx.lineTo(b[0], b[1]);
+    });
+    view.city.streetsZ.concat([view.city.coastZ]).forEach(function (z) {
+      const a = worldToMap(canvas, -WORLD, z);
+      const b = worldToMap(canvas, WORLD, z);
+      ctx.moveTo(a[0], a[1]);
+      ctx.lineTo(b[0], b[1]);
+    });
+    ctx.stroke();
+
+    function dot(x, z, color, size) {
+      const p = worldToMap(canvas, x, z);
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(p[0], p[1], size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    view.traffic.forEach(function (car) {
+      dot(car.pos.x, car.pos.z, '#c8ccd4', 2);
+    });
+    view.police.forEach(function (car) {
+      dot(car.pos.x, car.pos.z, '#ff5252', 3);
+    });
+
+    // Mission blip: pulsing gold ring.
+    if (view.target) {
+      const p = worldToMap(canvas, view.target.x, view.target.z);
+      const pulse = 5 + Math.sin(view.time * 5) * 1.6;
+      ctx.strokeStyle = '#ffd23e';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(p[0], p[1], pulse, 0, Math.PI * 2);
+      ctx.stroke();
+      dot(view.target.x, view.target.z, '#ffd23e', 2.6);
+    }
+
+    // Player arrow, rotated to facing.
+    const pp = worldToMap(canvas, view.playerPos.x, view.playerPos.z);
+    ctx.save();
+    ctx.translate(pp[0], pp[1]);
+    ctx.rotate(view.playerHeading);
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.moveTo(0, -6);
+    ctx.lineTo(4, 5);
+    ctx.lineTo(-4, 5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  window.CH = window.CH || {};
+  window.CH.hud = { createHud, showToast, showBanner, updateHud, drawMinimap };
+})();

@@ -1,137 +1,194 @@
-// Coral Heat — people: one low-poly articulated figure builder shared by the player and the
-// pedestrians, plus the pedestrian brain (stroll the sidewalks, flee from trouble, fall when
-// shot — they fade out and are quietly replaced, no gore in Coral Bay).
-window.CH = window.CH || {};
-
+// people.js — low-poly human figures for Coral Heat: the player character
+// (hoodie, cap, backpack) and the pedestrian crowd that strolls the
+// sidewalks and bolts when a shot cracks or a car bears down on them.
 (function () {
-  const SKIN = [0xf2c79b, 0xc68863, 0x8a5a3b, 0xffe0bd];
-  const SHIRTS = [0xff6b4a, 0x3d8b84, 0xffc94d, 0xf2ede4, 0x5b84ae, 0xf9e2e4, 0x7fb069, 0xe2725b];
-  const PANTS = [0x35424e, 0x74604a, 0xf2ede4, 0x2b4a67, 0x8a8f7a];
+  'use strict';
 
-  // A ~1.75 m figure: legs and arms pivot at hip/shoulder so a walk cycle is just sine waves.
-  function makePerson(opts) {
-    opts = opts || {};
-    const g = new THREE.Group();
-    const skin = new THREE.MeshLambertMaterial({ color: opts.skin || CH.pick(SKIN) });
-    const shirt = new THREE.MeshLambertMaterial({ color: opts.shirt || CH.pick(SHIRTS) });
-    const pants = new THREE.MeshLambertMaterial({ color: opts.pants || CH.pick(PANTS) });
-    function part(w, h, d, mat, x, y, z, parent) {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
-      m.position.set(x, y, z); m.castShadow = true;
-      (parent || g).add(m); return m;
-    }
-    function limb(w, h, d, mat, x, y, z) {
+  const R = window.CH.rng;
+
+  const SKIN = [0xf2c89b, 0xc98d5f, 0x8a5a33, 0xffe0bd];
+  const SHIRTS = [0xe74c3c, 0x3498db, 0x2ecc71, 0xf39c12, 0xfd79a8, 0x9b59b6, 0xecf0f1, 0x1abc9c];
+  const PANTS = [0x2c3e50, 0x34495e, 0x7f8c8d, 0x5d4037, 0x16a085];
+
+  // A simple articulated figure: torso, head, two arms, two legs, all boxes
+  // on pivots so the walk cycle can swing limbs. Returns handles for posing.
+  function buildFigure(shirtColor, pantsColor, skinColor) {
+    const group = new THREE.Group();
+    const shirt = new THREE.MeshLambertMaterial({ color: shirtColor });
+    const pants = new THREE.MeshLambertMaterial({ color: pantsColor });
+    const skin = new THREE.MeshLambertMaterial({ color: skinColor });
+
+    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.78, 0.34), shirt);
+    torso.position.y = 1.12;
+    group.add(torso);
+
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.42, 0.4), skin);
+    head.position.y = 1.74;
+    group.add(head);
+
+    function limb(w, len, mat, x, y, z) {
       const pivot = new THREE.Group();
       pivot.position.set(x, y, z);
-      part(w, h, d, mat, 0, -h / 2, 0, pivot);
-      g.add(pivot);
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, len, w), mat);
+      mesh.position.y = -len / 2;
+      pivot.add(mesh);
+      group.add(pivot);
       return pivot;
     }
-    const legL = limb(0.17, 0.78, 0.19, pants, -0.12, 0.8, 0);
-    const legR = limb(0.17, 0.78, 0.19, pants, 0.12, 0.8, 0);
-    part(0.46, 0.62, 0.26, shirt, 0, 1.11, 0);                       // torso
-    const armL = limb(0.13, 0.68, 0.15, shirt, -0.31, 1.38, 0);
-    const armR = limb(0.13, 0.68, 0.15, shirt, 0.31, 1.38, 0);
-    part(0.3, 0.34, 0.3, skin, 0, 1.6, 0);                           // head
-    if (opts.cap !== false && CH.chance(0.45)) {
-      part(0.36, 0.09, 0.36, new THREE.MeshLambertMaterial({ color: CH.pick(SHIRTS) }), 0, 1.79, 0);
-    }
-    const person = { group: g, legL, legR, armL, armR, walkPhase: Math.random() * 6 };
-    g.userData.person = person;
-    return person;
+
+    const armL = limb(0.16, 0.68, shirt, -0.4, 1.44, 0);
+    const armR = limb(0.16, 0.68, shirt, 0.4, 1.44, 0);
+    const legL = limb(0.2, 0.74, pants, -0.16, 0.74, 0);
+    const legR = limb(0.2, 0.74, pants, 0.16, 0.74, 0);
+
+    return { group, torso, head, armL, armR, legL, legR };
   }
 
-  function animateWalk(p, speedNorm, dt) {
-    p.walkPhase += dt * (4 + speedNorm * 7);
-    const s = Math.sin(p.walkPhase) * (0.25 + speedNorm * 0.45);
-    p.legL.rotation.x = s; p.legR.rotation.x = -s;
-    p.armL.rotation.x = -s * 0.8; p.armR.rotation.x = s * 0.8;
-  }
-  function animateIdle(p) {
-    p.legL.rotation.x *= 0.8; p.legR.rotation.x *= 0.8;
-    p.armL.rotation.x *= 0.8; p.armR.rotation.x *= 0.8;
-  }
-  function animateFall(p, t) {
-    // t: 0..1 — tip over backwards and sink slightly
-    p.group.rotation.x = -Math.min(1, t * 1.6) * Math.PI / 2;
-    p.group.position.y = -Math.max(0, t - 0.6) * 0.8;
+  // Pose the figure for a walk cycle. phase advances with distance walked;
+  // speedRatio 0 = idle sway, 1 = full stride.
+  function poseWalk(fig, phase, speedRatio, aiming) {
+    const swing = Math.sin(phase) * 0.65 * speedRatio;
+    fig.legL.rotation.x = swing;
+    fig.legR.rotation.x = -swing;
+    if (aiming) {
+      fig.armR.rotation.x = -Math.PI / 2 + 0.08;
+      fig.armL.rotation.x = -Math.PI / 2 + 0.25;
+      fig.armL.rotation.z = 0.25;
+    } else {
+      fig.armL.rotation.x = -swing * 0.8;
+      fig.armR.rotation.x = swing * 0.8;
+      fig.armL.rotation.z = 0;
+    }
   }
 
-  // ---- pedestrians ----
-  function makePedestrian(world, scene) {
-    const person = makePerson();
-    const seg = CH.pick(world.sidewalkSegs);
-    const ped = {
-      person, group: person.group, seg,
-      t: CH.random(), dir: CH.chance(0.5) ? 1 : -1,
-      speed: CH.range(1.1, 1.9), state: 'stroll', fleeT: 0, fleeFrom: null,
-      dead: false, deadT: 0, radius: 0.55,
-    };
-    placeOnSeg(ped);
-    scene.add(ped.group);
-    return ped;
-  }
-  function placeOnSeg(ped) {
-    const s = ped.seg;
-    ped.group.position.set(
-      s.ax + (s.bx - s.ax) * ped.t, 0.22,
-      s.az + (s.bz - s.az) * ped.t);
-    const heading = Math.atan2((s.bx - s.ax) * ped.dir, (s.bz - s.az) * ped.dir);
-    ped.group.rotation.y = heading;
-  }
-  function updatePedestrian(ped, dt, world, threat) {
-    const pos = ped.group.position;
-    if (ped.dead) {
-      ped.deadT += dt;
-      animateFall(ped.person, ped.deadT);
-      return ped.deadT > 2.6; // true -> ready to recycle
-    }
-    // flee if a threat is close (gunfire, a car on the sidewalk, a chase)
-    if (threat && CH.dist2d(pos.x, pos.z, threat.x, threat.z) < 13) {
-      ped.state = 'flee'; ped.fleeT = 2.6; ped.fleeFrom = threat;
-    }
-    if (ped.state === 'flee') {
-      ped.fleeT -= dt;
-      const away = Math.atan2(pos.x - ped.fleeFrom.x, pos.z - ped.fleeFrom.z);
-      ped.group.rotation.y = CH.lerpAngle(ped.group.rotation.y, away, dt * 8);
-      pos.x += Math.sin(ped.group.rotation.y) * 4.6 * dt;
-      pos.z += Math.cos(ped.group.rotation.y) * 4.6 * dt;
-      CH.collideWorld(world, pos, ped.radius);
-      pos.y = 0.22;
-      animateWalk(ped.person, 1, dt);
-      if (ped.fleeT <= 0) { ped.state = 'stroll'; placeSnap(ped); }
-      return false;
-    }
-    // stroll along the segment, turn around at the ends
-    const s = ped.seg;
-    const segLen = CH.dist2d(s.ax, s.az, s.bx, s.bz);
-    ped.t += (ped.speed * ped.dir * dt) / segLen;
-    if (ped.t > 1) { ped.t = 1; ped.dir = -1; }
-    if (ped.t < 0) { ped.t = 0; ped.dir = 1; }
-    placeOnSeg(ped);
-    animateWalk(ped.person, 0.4, dt);
-    return false;
-  }
-  function placeSnap(ped) { /* after fleeing, adopt nearest segment afresh */ 
-    ped.t = CH.clamp(ped.t, 0, 1); placeOnSeg(ped);
-  }
-  function killPedestrian(ped) {
-    if (ped.dead) return;
-    ped.dead = true; ped.deadT = 0;
-  }
-  function revivePedestrian(ped, world) {
-    ped.dead = false; ped.deadT = 0; ped.state = 'stroll';
-    ped.group.rotation.x = 0;
-    ped.seg = CH.pick(world.sidewalkSegs);
-    ped.t = CH.random();
-    placeOnSeg(ped);
+  function buildPlayerFigure() {
+    const fig = buildFigure(0xff7847, 0x27324a, 0xf2c89b);
+    // Coral cap + brim.
+    const capMat = new THREE.MeshLambertMaterial({ color: 0x14b8a6 });
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.14, 0.44), capMat);
+    cap.position.y = 1.99;
+    fig.group.add(cap);
+    const brim = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.06, 0.3), capMat);
+    brim.position.set(0, 1.94, 0.34);
+    fig.group.add(brim);
+    // Backpack.
+    const pack = new THREE.Mesh(
+      new THREE.BoxGeometry(0.46, 0.56, 0.22),
+      new THREE.MeshLambertMaterial({ color: 0xfacc15 })
+    );
+    pack.position.set(0, 1.16, -0.3);
+    fig.group.add(pack);
+    // Pistol, parented to the right arm pivot so aiming raises it.
+    const gun = new THREE.Mesh(
+      new THREE.BoxGeometry(0.09, 0.14, 0.42),
+      new THREE.MeshLambertMaterial({ color: 0x22242a })
+    );
+    gun.position.set(0, -0.7, 0.18);
+    gun.visible = false;
+    fig.armR.add(gun);
+    fig.gun = gun;
+    return fig;
   }
 
-  CH.makePerson = makePerson;
-  CH.animateWalk = animateWalk;
-  CH.animateIdle = animateIdle;
-  CH.makePedestrian = makePedestrian;
-  CH.updatePedestrian = updatePedestrian;
-  CH.killPedestrian = killPedestrian;
-  CH.revivePedestrian = revivePedestrian;
+  // --- pedestrians -------------------------------------------------------
+  // Each ped walks a straight sidewalk leg between two waypoints, picks a
+  // new leg at the end, and flees directly away from a danger point while
+  // `panicUntil` is in the future.
+
+  function spawnPedestrians(scene, city, count) {
+    const peds = [];
+    const walkZ = city.streetsZ.concat([city.coastZ]);
+    for (let i = 0; i < count; i++) {
+      const fig = buildFigure(R.pick(SHIRTS), R.pick(PANTS), R.pick(SKIN));
+      const alongX = R.rand() < 0.5;
+      const line = alongX ? R.pick(walkZ) : R.pick(city.avenuesX);
+      const offset = (R.rand() < 0.5 ? -1 : 1) * (city.roadHalf + 2.2);
+      const pos = new THREE.Vector3(
+        alongX ? R.randRange(-185, 185) : line + offset,
+        0,
+        alongX ? line + offset : R.randRange(-185, 95)
+      );
+      fig.group.position.copy(pos);
+      scene.add(fig.group);
+      peds.push({
+        fig,
+        pos,
+        alongX,
+        dir: R.rand() < 0.5 ? 1 : -1,
+        speed: R.randRange(1.6, 2.6),
+        phase: R.randRange(0, 6),
+        panicUntil: 0,
+        fleeX: 0,
+        fleeZ: 0,
+        dead: false,
+      });
+    }
+    return peds;
+  }
+
+  function scarePeds(peds, x, z, radius, now) {
+    for (let i = 0; i < peds.length; i++) {
+      const p = peds[i];
+      if (p.dead) continue;
+      if (R.distance2D(p.pos.x, p.pos.z, x, z) < radius) {
+        p.panicUntil = now + R.randRange(1.6, 3.0);
+        p.fleeX = p.pos.x - x;
+        p.fleeZ = p.pos.z - z;
+        const len = Math.sqrt(p.fleeX * p.fleeX + p.fleeZ * p.fleeZ) || 1;
+        p.fleeX /= len;
+        p.fleeZ /= len;
+      }
+    }
+  }
+
+  function updatePedestrians(peds, dt, now, city) {
+    for (let i = 0; i < peds.length; i++) {
+      const p = peds[i];
+      if (p.dead) continue;
+      let vx = 0;
+      let vz = 0;
+      let speedRatio = 1;
+      if (now < p.panicUntil) {
+        vx = p.fleeX * 5.2;
+        vz = p.fleeZ * 5.2;
+        speedRatio = 1.6;
+      } else if (p.alongX) {
+        vx = p.dir * p.speed;
+        if (p.pos.x > 188) p.dir = -1;
+        if (p.pos.x < -188) p.dir = 1;
+      } else {
+        vz = p.dir * p.speed;
+        if (p.pos.z > 100) p.dir = -1;
+        if (p.pos.z < -188) p.dir = 1;
+      }
+      p.pos.x += vx * dt;
+      p.pos.z += vz * dt;
+      city.collide(p.pos, 0.45);
+      p.phase += dt * (4 + speedRatio * 4);
+      p.fig.group.position.copy(p.pos);
+      if (vx !== 0 || vz !== 0) {
+        p.fig.group.rotation.y = Math.atan2(vx, vz);
+      }
+      poseWalk(p.fig, p.phase, Math.min(1, speedRatio), false);
+    }
+  }
+
+  // A ped caught by a fast car topples (no gore — they just fall over and
+  // fade out, then respawn elsewhere later via the main loop's timer).
+  function knockDownPed(ped) {
+    ped.dead = true;
+    ped.fig.group.rotation.x = -Math.PI / 2;
+    ped.fig.group.position.y = 0.25;
+  }
+
+  window.CH = window.CH || {};
+  window.CH.people = {
+    buildFigure,
+    buildPlayerFigure,
+    poseWalk,
+    spawnPedestrians,
+    scarePeds,
+    updatePedestrians,
+    knockDownPed,
+  };
 })();
